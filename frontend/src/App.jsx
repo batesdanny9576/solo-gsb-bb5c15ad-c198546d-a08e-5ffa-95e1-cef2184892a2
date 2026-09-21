@@ -4,6 +4,7 @@ import TextView from './components/TextView'
 import CodingForm from './components/CodingForm'
 import ConflictDialog from './components/ConflictDialog'
 import Sidebar from './components/Sidebar'
+import CooccurrenceView from './components/CooccurrenceView'
 
 export default function App() {
   const [docs, setDocs] = useState([])
@@ -18,6 +19,11 @@ export default function App() {
   const [error, setError] = useState(null)
   const [showNewDoc, setShowNewDoc] = useState(false)
   const [newDoc, setNewDoc] = useState({ title: '', content: '' })
+  const [view, setView] = useState('text') // text | cooccurrence
+  const [coocStats, setCoocStats] = useState(null)
+  const [coocLoading, setCoocLoading] = useState(false)
+  const [coocError, setCoocError] = useState(null)
+  const [pendingLocate, setPendingLocate] = useState(null)
 
   const showError = useCallback((e) => {
     setError(e.message || String(e))
@@ -60,6 +66,7 @@ export default function App() {
     if (docId != null) {
       setEditing(null)
       setSelection(null)
+      setPendingLocate(null)
       loadDocument(docId)
     }
   }, [docId, loadDocument])
@@ -67,6 +74,39 @@ export default function App() {
   const refresh = useCallback(async () => {
     await Promise.all([loadDocument(docId), loadCodes()])
   }, [docId, loadDocument, loadCodes])
+
+  // ---------- 编码共现统计（随当前文档与编码筛选同步） ----------
+
+  const filteredCodeIds = useMemo(() => {
+    if (filters === null) return null
+    return codebook.map((c) => c.id).filter((id) => filters.has(id))
+  }, [filters, codebook])
+
+  const loadCooccurrence = useCallback(async () => {
+    if (docId == null) return
+    // 全部编码被取消勾选：直接给空结果，不请求后端
+    if (filteredCodeIds && filteredCodeIds.length === 0) {
+      setCoocStats({ document_id: docId, codes: [], pairs: [] })
+      setCoocError(null)
+      setCoocLoading(false)
+      return
+    }
+    setCoocLoading(true)
+    setCoocError(null)
+    try {
+      setCoocStats(await api.getCooccurrence(docId, filteredCodeIds))
+    } catch (e) {
+      setCoocStats(null)
+      setCoocError(e.message || String(e))
+    } finally {
+      setCoocLoading(false)
+    }
+    // docData 变化（新建/编辑/删除标注后 refresh）也要重新统计
+  }, [docId, filteredCodeIds, docData])
+
+  useEffect(() => {
+    loadCooccurrence()
+  }, [loadCooccurrence])
 
   // ---------- 编码创建 / 编辑（含冲突检测） ----------
 
@@ -161,9 +201,7 @@ export default function App() {
     }
   }
 
-  function handleLocate(cg) {
-    const range = { start: cg.start, end: cg.end }
-    setFlashRange(range)
+  function scrollToRange(range) {
     const spans = document.querySelectorAll('.text-view [data-s]')
     for (const span of spans) {
       const s = Number(span.dataset.s)
@@ -173,8 +211,37 @@ export default function App() {
         break
       }
     }
+  }
+
+  function handleLocate(cg) {
+    const range = { start: cg.start, end: cg.end }
+    setFlashRange(range)
+    scrollToRange(range)
     setTimeout(() => setFlashRange(null), 1800)
   }
+
+  // 共现矩阵片段 → 切回正文并定位高亮
+  function handleLocateCoocSegment(seg) {
+    setView('text')
+    setPendingLocate({ start: seg.start, end: seg.end })
+  }
+
+  // 正文渲染完成后处理来自共现视图的待定位片段
+  useEffect(() => {
+    if (view !== 'text' || !pendingLocate) return
+    const range = pendingLocate
+    setFlashRange(range)
+    // 等视图切换后的 DOM 渲染完成再滚动
+    const t = setTimeout(() => scrollToRange(range), 60)
+    const clear = setTimeout(() => {
+      setFlashRange(null)
+      setPendingLocate(null)
+    }, 2200)
+    return () => {
+      clearTimeout(t)
+      clearTimeout(clear)
+    }
+  }, [view, pendingLocate])
 
   function toggleFilter(id) {
     setFilters((cur) => {
@@ -276,16 +343,43 @@ export default function App() {
               {filters !== null && `（筛选后 ${visibleCodings.length} 条）`}
             </span>
           </div>
-          <TextView
-            content={doc.content}
-            codings={visibleCodings}
-            selection={selection}
-            flashRange={flashRange}
-            onSelect={(range) => {
-              setSelection(range)
-              if (editing) setEditing(null)
-            }}
-          />
+          <div className="view-tabs" role="tablist">
+            <button
+              role="tab"
+              aria-selected={view === 'text'}
+              className={view === 'text' ? 'active' : ''}
+              onClick={() => setView('text')}
+            >
+              正文标注
+            </button>
+            <button
+              role="tab"
+              aria-selected={view === 'cooccurrence'}
+              className={view === 'cooccurrence' ? 'active' : ''}
+              onClick={() => setView('cooccurrence')}
+            >
+              编码共现
+            </button>
+          </div>
+          {view === 'text' ? (
+            <TextView
+              content={doc.content}
+              codings={visibleCodings}
+              selection={selection}
+              flashRange={flashRange}
+              onSelect={(range) => {
+                setSelection(range)
+                if (editing) setEditing(null)
+              }}
+            />
+          ) : (
+            <CooccurrenceView
+              stats={coocStats}
+              loading={coocLoading}
+              error={coocError}
+              onLocateSegment={handleLocateCoocSegment}
+            />
+          )}
         </section>
 
         <div className="right-panel">

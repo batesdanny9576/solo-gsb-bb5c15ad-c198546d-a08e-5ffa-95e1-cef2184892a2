@@ -31,7 +31,13 @@ docker compose up --build
   - **拆分 split**：沿新区间边界拆分外层编码；若新区间包含他者，则新区间自身绕开拆分；
   - **保留边界 keep**：不做调整，重叠 / 嵌套共存。
 - **编辑与删除**：侧栏标注列表支持定位（滚动 + 闪烁）、编辑（改区间或改编码，同样走冲突检测）、删除。
-- **编码筛选**：编码本复选框控制文本高亮与标注列表的显示范围。
+- **编码筛选**：编码本复选框控制文本高亮、标注列表与共现矩阵的显示范围。
+- **编码共现视图**：正文区顶部切换到「编码共现」标签，按当前文档展示编码两两关系矩阵——
+  - 计算口径：先分别**合并同一编码自身重叠或相邻（首尾相接）的半开区间**，再对每对编码求区间交集，保证共享字符不被重复计数；
+  - 矩阵可在**共现覆盖字符数**（交集各段长度之和）与**共现片段数**（交集被编码边界切成的段数）两种指标间切换，单元格按数值相对最大值**深浅着色**；对角线灰色显示该编码自身合并后的覆盖，仅供参考；
+  - 点击非零单元格列出对应**交集片段及原文摘录**，点击片段自动切回正文、滚动并闪烁定位高亮；
+  - 编码筛选变化后矩阵与片段明细同步更新；无共现或未勾选编码时给出明确空状态。
+  - 对应 `GET /api/documents/{id}/cooccurrence?codes=…`。
 - **JSON 导出**：顶栏「导出 JSON」下载当前文档的完整编码结果（含每条标注的区间与原文切片），对应 `GET /api/documents/{id}/export`。
 - **持久化**：所有文档、编码本、标注均存于 SQLite，刷新页面后原样恢复；首次启动自动载入一份示例访谈与编码。
 
@@ -56,6 +62,7 @@ npm run dev   # http://localhost:5173
 | GET | `/api/documents` | 文档列表 |
 | POST | `/api/documents` | 新建文档 `{title, content}` |
 | GET | `/api/documents/{id}` | 文档详情（含编码本与全部标注） |
+| GET | `/api/documents/{id}/cooccurrence` | 编码两两共现统计，可带 `?codes=1&codes=2` 按编码筛选；返回每对编码合并后的共现字符数、片段数与原文摘录 |
 | GET | `/api/documents/{id}/export` | 导出 JSON（附件下载） |
 | GET / POST | `/api/codes` | 编码本列表 / 新建（重名返回 409） |
 | PUT / DELETE | `/api/codes/{id}` | 重命名、改色 / 删除（级联删除标注） |
@@ -71,13 +78,14 @@ npm run dev   # http://localhost:5173
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── app/
-│       ├── main.py         # FastAPI 路由与决策应用
-│       ├── conflicts.py    # 冲突检测 / 合并 / 拆分纯函数
-│       └── db.py           # SQLite 连接、建表、示例数据
+│       ├── main.py           # FastAPI 路由与决策应用
+│       ├── conflicts.py      # 冲突检测 / 合并 / 拆分纯函数
+│       ├── cooccurrence.py   # 区间归一化 / 交集 / 共现统计纯函数
+│       └── db.py             # SQLite 连接、建表、示例数据
 └── frontend/
     ├── Dockerfile          # 多阶段构建：Vite build → nginx
     ├── nginx.conf          # 静态托管 + /api 反向代理
     └── src/
         ├── App.jsx         # 状态编排与冲突决策流
-        └── components/     # TextView / CodingForm / ConflictDialog / Sidebar
+        └── components/     # TextView / CodingForm / ConflictDialog / Sidebar / CooccurrenceView
 ```

@@ -23,6 +23,10 @@ export const api = {
     request('/documents', { method: 'POST', body: JSON.stringify({ title, content }) }),
   getDocument: (id) => request(`/documents/${id}`),
   deleteDocument: (id) => request(`/documents/${id}`, { method: 'DELETE' }),
+  getCooccurrence: (id, codeIds = null) => {
+    const qs = codeIds && codeIds.length ? `?${codeIds.map((c) => `codes=${c}`).join('&')}` : ''
+    return request(`/documents/${id}/cooccurrence${qs}`)
+  },
 
   listCodes: () => request('/codes'),
   createCode: (name, color) =>

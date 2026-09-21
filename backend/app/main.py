@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -18,6 +18,7 @@ from .conflicts import (
     split_containers,
     subtract_ranges,
 )
+from .cooccurrence import build_code_intervals, intersect_intervals
 from .db import get_db, init_db, list_codings, next_color
 
 Resolution = Literal["keep", "merge", "split"]
@@ -392,3 +393,61 @@ def export_document(document_id: int) -> JSONResponse:
         content=payload,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------- 编码共现统计 ----------
+
+@app.get("/api/documents/{document_id}/cooccurrence")
+def cooccurrence(
+    document_id: int,
+    codes: list[int] | None = Query(default=None),
+) -> dict:
+    """按当前文档返回编码两两共现矩阵数据。
+
+    查询参数 `codes` 为可选的编码筛选（?codes=1&codes=2）；缺省统计编码本
+    全部编码。每个编码先各自合并重叠/相邻区间，再对编码对求交集，保证
+    共享字符不被重复计数。
+    """
+    with get_db() as conn:
+        doc = get_document_or_404(conn, document_id)
+        all_codes = {
+            r["id"]: {"id": r["id"], "name": r["name"], "color": r["color"]}
+            for r in conn.execute("SELECT id, name, color FROM codes ORDER BY id")
+        }
+        if codes:
+            unknown = [cid for cid in dict.fromkeys(codes) if cid not in all_codes]
+            if unknown:
+                raise HTTPException(
+                    status_code=404, detail=f"编码不存在: {unknown}"
+                )
+            member_ids = sorted(set(codes))
+        else:
+            member_ids = sorted(all_codes)
+        codings = list_codings(conn, document_id)
+
+    intervals = build_code_intervals(codings)
+    content = doc["content"]
+    pairs: list[dict] = []
+    for i, ci in enumerate(member_ids):
+        for cj in member_ids[i:]:
+            ivs_i = intervals.get(ci, [])
+            ivs_j = intervals.get(cj, [])
+            shared = ivs_i if ci == cj else intersect_intervals(ivs_i, ivs_j)
+            pairs.append(
+                {
+                    "code_a_id": ci,
+                    "code_b_id": cj,
+                    "diagonal": ci == cj,
+                    "char_count": sum(e - s for s, e in shared),
+                    "segment_count": len(shared),
+                    "segments": [
+                        {"start": s, "end": e, "text": content[s:e]}
+                        for s, e in shared
+                    ],
+                }
+            )
+    return {
+        "document_id": document_id,
+        "codes": [all_codes[cid] for cid in member_ids],
+        "pairs": pairs,
+    }
