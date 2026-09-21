@@ -40,4 +40,12 @@ export const api = {
   deleteCoding: (id) => request(`/codings/${id}`, { method: 'DELETE' }),
 
   exportUrl: (docId) => `${BASE}/documents/${docId}/export`,
+
+  cooccurrence: (docId, codeIds = null) => {
+    const qs =
+      codeIds && codeIds.length > 0
+        ? '?' + codeIds.map((id) => `code_ids=${encodeURIComponent(id)}`).join('&')
+        : ''
+    return request(`/documents/${docId}/cooccurrence${qs}`)
+  },
 }

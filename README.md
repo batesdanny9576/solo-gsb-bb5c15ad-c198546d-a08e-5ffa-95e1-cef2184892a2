@@ -32,6 +32,11 @@ docker compose up --build
   - **保留边界 keep**：不做调整，重叠 / 嵌套共存。
 - **编辑与删除**：侧栏标注列表支持定位（滚动 + 闪烁）、编辑（改区间或改编码，同样走冲突检测）、删除。
 - **编码筛选**：编码本复选框控制文本高亮与标注列表的显示范围。
+- **编码共现视图**：正文区顶部切换到「编码共现」，按当前文档展示编码两两关系矩阵——
+  - 口径：统计前先把**同一编码自身重叠 / 相邻**的半开区间合并，再对编码对求交集，因此同一处共享字符不会被重复计数（半开区间仅首尾相接 `[a,b)`+`[b,c)` 不算共现）；
+  - 可在**共现覆盖字符数**与**共现片段数**两种口径之间切换，单元格按当前口径相对最大值深浅着色；斜纹对角格为编码自身合并覆盖；
+  - 点击非零单元格，下方列出对应交集片段（区间 + 原文摘录）；点击片段自动切回正文视图并滚动、闪烁定位高亮；
+  - 编码筛选变化后矩阵与片段明细同步更新；筛选为空、仅 1 个编码或编码间无共现时给出明确空状态。
 - **JSON 导出**：顶栏「导出 JSON」下载当前文档的完整编码结果（含每条标注的区间与原文切片），对应 `GET /api/documents/{id}/export`。
 - **持久化**：所有文档、编码本、标注均存于 SQLite，刷新页面后原样恢复；首次启动自动载入一份示例访谈与编码。
 
@@ -56,6 +61,7 @@ npm run dev   # http://localhost:5173
 | GET | `/api/documents` | 文档列表 |
 | POST | `/api/documents` | 新建文档 `{title, content}` |
 | GET | `/api/documents/{id}` | 文档详情（含编码本与全部标注） |
+| GET | `/api/documents/{id}/cooccurrence` | 编码两两共现矩阵（可重复带 `code_ids` 参数限定统计编码） |
 | GET | `/api/documents/{id}/export` | 导出 JSON（附件下载） |
 | GET / POST | `/api/codes` | 编码本列表 / 新建（重名返回 409） |
 | PUT / DELETE | `/api/codes/{id}` | 重命名、改色 / 删除（级联删除标注） |
@@ -73,11 +79,12 @@ npm run dev   # http://localhost:5173
 │   └── app/
 │       ├── main.py         # FastAPI 路由与决策应用
 │       ├── conflicts.py    # 冲突检测 / 合并 / 拆分纯函数
+│       ├── cooccurrence.py # 共现区间合并 / 交集 / 矩阵统计纯函数
 │       └── db.py           # SQLite 连接、建表、示例数据
 └── frontend/
     ├── Dockerfile          # 多阶段构建：Vite build → nginx
     ├── nginx.conf          # 静态托管 + /api 反向代理
     └── src/
         ├── App.jsx         # 状态编排与冲突决策流
-        └── components/     # TextView / CodingForm / ConflictDialog / Sidebar
+        └── components/     # TextView / CodingForm / ConflictDialog / Sidebar / CooccurrenceMatrix
 ```

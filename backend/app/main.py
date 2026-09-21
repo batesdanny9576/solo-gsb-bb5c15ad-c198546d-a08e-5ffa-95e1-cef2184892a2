@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -18,6 +18,7 @@ from .conflicts import (
     split_containers,
     subtract_ranges,
 )
+from .cooccurrence import build_cooccurrence
 from .db import get_db, init_db, list_codings, next_color
 
 Resolution = Literal["keep", "merge", "split"]
@@ -349,6 +350,56 @@ def delete_coding(coding_id: int) -> Response:
             raise HTTPException(status_code=404, detail="编码标注不存在")
         conn.execute("DELETE FROM codings WHERE id = ?", (coding_id,))
     return Response(status_code=204)
+
+
+# ---------- 编码共现统计 ----------
+
+@app.get("/api/documents/{document_id}/cooccurrence")
+def document_cooccurrence(
+    document_id: int,
+    code_ids: list[int] | None = Query(default=None),
+) -> dict:
+    """当前文档的编码两两共现矩阵。
+
+    口径：先把同一编码自身重叠 / 相邻的半开区间合并，再对编码对求交集，
+    故共现字符数不重复计数。可用 `?code_ids=1&code_ids=2` 限定参与统计
+    的编码（与前端编码筛选同步）；不传则统计文档内全部编码。
+
+    返回：
+      {
+        "document_id", "codes": [文档内有标注的编码元信息],
+        "active_code_ids": [...],
+        "cells": [
+          {row_code_id, col_code_id, diagonal,
+           char_count, fragment_count,
+           fragments: [{start, end, text}]}
+        ]
+      }
+    cells 只含上三角（含对角线）非零格。
+    """
+    with get_db() as conn:
+        doc = get_document_or_404(conn, document_id)
+        codings = list_codings(conn, document_id)
+        if code_ids is not None:
+            wanted = set(code_ids)
+            codings = [c for c in codings if c["code_id"] in wanted]
+
+        stats = build_cooccurrence(codings)
+        active = set(stats["active_code_ids"])
+        codes = [
+            {"id": c["id"], "name": c["name"], "color": c["color"]}
+            for c in conn.execute(
+                "SELECT id, name, color FROM codes ORDER BY id"
+            ).fetchall()
+            if c["id"] in active
+        ]
+        content = doc["content"]
+
+    for cell in stats["cells"]:
+        for f in cell["fragments"]:
+            f["text"] = content[f["start"] : f["end"]]
+
+    return {"document_id": document_id, "codes": codes, **stats}
 
 
 # ---------- 导出 ----------
